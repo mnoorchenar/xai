@@ -8,12 +8,12 @@ library(ggplot2)
 library(dplyr)
 library(hrbrthemes)
 library(reshape2)
-
+library(trendsegmentR)
 
 t <- 2 * pi * seq(0, 1, length = 1024)
 y <- sin(3.14 * t) + 0.5 * cos(6.09 * t) + 0.1 * sin(10.11 * t + 1 / 6) + 0.1 * sin(15.3 * t + 1 / 3)
-x_normal <- abs(y + 0.06*rnorm(length(y),1))   # Positive values + noise
-
+x_normal <- abs(y)
+# x_normal <- abs(y + 0.05*rnorm(length(y),1))   # Positive values + noise
 
 min_max_scaling <- function(x) {
   return((x - min(x)) / (max(x) - min(x)))
@@ -41,71 +41,74 @@ my_dwt <- function(signal, same_size=T, normalize=T) {
   }
   result <- as.data.frame(result)
   colnames(result) <- paste0('level',1:length(w@V))
-
+  
   if (normalize==T) {
     result <- sapply(result, min_max_scaling)
     result[,length(w@V)] <- mean(signal)
     signal <- min_max_scaling(signal)
   }
   
-  return(list('wavelet_dec'=result, 'signal'=signal))
+  return(list('Wavelet_Coef'=result, 'Signal'=signal))
 }
 
 
-signal_features <- function(signal) {
-  result <- c(mean(signal), 
-              sd(signal),
-              skewness(signal),
-              kurtosis(signal))
-  names(result) <- c('mean', 'sd', 'skewness', 'kurtosis')
-  return(result)
-}
+up_down <- trendsegmentR::trendsegment(in_control$signal$V1)
+up_down$no.of.cpt
 
-fwt <- function(signal, levels=c(5,6)) {
-  w <- dwt(signal, filter="haar") #decompose level 10
-  result <- matrix(data = NA, nrow = 1, ncol = 4 * (length(levels)+1)) # +1 adding the value of main signal without decomposition
-  tmp_result <- signal_features(signal)
-  tmp_names <- c('mean', 'sd', 'skewness', 'kurtosis')
-  for (i in levels) {
-    tmp_result <- append(tmp_result, signal_features(as.numeric(w@V[[i]])))
-    tmp_names <- append(tmp_names, paste0(c('mean', 'sd', 'skewness', 'kurtosis'),'_',i))
-  }
-  result[1,] <- tmp_result
-  result <- as.data.frame(result)
-  colnames(result) <- tmp_names
-  return(result)
-}
+plot(in_control$signal$V1, type = 'l')
+points(up_down$est, type = 'l', col='red')
+
+up_down$cpt
 
 
-# simulating signals
-signal_simulate <- function(n_simulation = 100, limit_mean = c(-0.1,0.1), limit_sd=c(0.01, 0.1), dec_leveles=c(4,5,6,7)){
+
+
+
+
+
+ # simulating signals
+signal_simulate <- function(n_simulation = 100, dec_leveles=c(1:9), anomaly=F, coef_sd_anomaly=3){
   signal <- as.data.frame(matrix(data = NA, nrow = length(x_normal), ncol = n_simulation))
   
   for (i in 1:n_simulation) {
-    signal[,i] <- x_normal+ rnorm(n = length(x_normal),mean = runif(n = 1,min = limit_mean[1], max = limit_mean[2]), sd = runif(n = 1,min = limit_sd[1], max = limit_sd[2]))
+    signal[,i] <- abs(x_normal + 0.05*rnorm(length(x_normal),1))
+    
+    if (anomaly==T) {
+      step <- round(0.01 * length(x_normal))
+      change_point <- sample(c(1:(length(x_normal)-step-1)),size = 1)
+      
+      signal[change_point:(step+change_point),i] <- signal[change_point:(step+change_point),i] + mean(signal[change_point:(step+change_point),i]) + sample(x = c(-coef_sd_anomaly,coef_sd_anomaly), size = 1) * sd(signal[change_point:(step+change_point),i])
+      
+      # mean ± coef_sd_anomaly * SD
+    }
   }
   
-  signal_features <- fwt(signal[,1], levels = dec_leveles)
+signal_features <- my_dwt(signal[,1])
   for (i in 2:n_simulation) {
     signal_features <- rbind(signal_features, fwt(signal[,i], levels = dec_leveles))
   }
   return(list('signal'=signal, 'features'=signal_features))
 }
 
-
-mean_in_control <- c(-0.05,0.07)
-mean_out_control <- c(0.05,0.1)
-
-sd_in_control <- c(0.05, 0.1)
-sd_out_control <- c(0.1,0.15)
-
 # simulating in control data
-in_control <- signal_simulate(limit_mean = mean_in_control, limit_sd=sd_in_control)
+in_control <- signal_simulate()
 #simulating anomalies (out of control)
-out_control <- signal_simulate(limit_mean = mean_out_control,limit_sd = sd_out_control)
-# View(in_control$features)
+out_control <- signal_simulate(anomaly = T, coef_sd_anomaly = 1)
+
 mydata = 
   cbind.data.frame(in_control$features, 'class'=0)
 mydata = rbind.data.frame(mydata, cbind.data.frame(out_control$features, 'class'=1))
+
+
+
+
+
+
+
+# ploting signals ---------------------------------------------------------
+df_plot <- cbind.data.frame('InControl'=in_control$signal$V1, 'OutControl'= out_control$signal$V1)
+df_plot['Time'] <- 1:nrow(df_plot)
+
+ggplot(data = df_plot,aes(x = Time, y = InControl)) + geom_line(color='#69b3a2') + geom_line(data = df_plot,aes(x = Time, y = OutControl), color='red', alpha=0.5)+ggtitle("Signal Power Consumption")+ theme(panel.background = element_rect(fill = 'white', colour = 'gray'))
 
 
